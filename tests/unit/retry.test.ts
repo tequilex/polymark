@@ -66,7 +66,7 @@ describe('withRetry', () => {
     expect(attempts).toBe(1);
   });
 
-  it('retries on network error and eventually succeeds', async () => {
+  it('retries on network TypeError and eventually succeeds', async () => {
     let attempts = 0;
 
     const result = await withRetry(
@@ -87,5 +87,80 @@ describe('withRetry', () => {
 
     expect(result).toBe('ok');
     expect(attempts).toBe(2);
+  });
+
+  it('does not retry on non-network TypeError', async () => {
+    let attempts = 0;
+
+    await expect(
+      withRetry(
+        async () => {
+          attempts += 1;
+          throw new TypeError('invalid parser state');
+        },
+        {
+          retries: 3,
+          baseDelayMs: 0,
+          jitter: false,
+        }
+      )
+    ).rejects.toThrow('invalid parser state');
+
+    expect(attempts).toBe(1);
+  });
+
+  it('retries on AbortError', async () => {
+    let attempts = 0;
+
+    class AbortDomError extends Error {
+      constructor() {
+        super('aborted');
+        this.name = 'AbortError';
+      }
+    }
+
+    const result = await withRetry(
+      async () => {
+        attempts += 1;
+        if (attempts < 2) {
+          throw new AbortDomError();
+        }
+
+        return 'ok';
+      },
+      {
+        retries: 2,
+        baseDelayMs: 0,
+        jitter: false,
+      }
+    );
+
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
+  });
+
+  it('applies exponential backoff when jitter is disabled', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+
+    await expect(
+      withRetry(
+        async () => {
+          attempts += 1;
+          throw new HttpStatusError(500, 'server error');
+        },
+        {
+          retries: 2,
+          baseDelayMs: 10,
+          jitter: false,
+          onRetry: (_attempt, _error, delayMs) => {
+            delays.push(delayMs);
+          },
+        }
+      )
+    ).rejects.toThrow('server error');
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([10, 20]);
   });
 });

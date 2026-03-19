@@ -22,13 +22,24 @@ export function isRetryableHttpStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+function isLikelyNetworkTypeError(error: TypeError): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('fetch') ||
+    message.includes('network') ||
+    message.includes('socket') ||
+    message.includes('econn') ||
+    message.includes('timed out')
+  );
+}
+
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof HttpStatusError) {
     return isRetryableHttpStatus(error.status);
   }
 
   if (error instanceof TypeError) {
-    return true;
+    return isLikelyNetworkTypeError(error);
   }
 
   if (error instanceof Error && error.name === 'AbortError') {

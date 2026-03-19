@@ -17,6 +17,20 @@ export interface GammaClientOptions {
 
 const DEFAULT_BASE_URL = 'https://gamma-api.polymarket.com';
 
+function toFiniteNumber(value: unknown): number {
+  const parsed = typeof value === 'string' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getVolumeScore(item: Record<string, unknown>): number {
+  return (
+    toFiniteNumber(item.volume24hr) ||
+    toFiniteNumber(item.oneDayVolume) ||
+    toFiniteNumber(item.volumeNum) ||
+    toFiniteNumber(item.volume)
+  );
+}
+
 export class GammaClient {
   private readonly fetchFn: typeof fetch;
   private readonly baseUrl: string;
@@ -50,7 +64,9 @@ export class GammaClient {
           question,
         };
       })
-      .filter((item) => item.id.length > 0);
+      .filter((item) => item.id.length > 0)
+      .sort((left, right) => getVolumeScore(right) - getVolumeScore(left))
+      .slice(0, limit);
   }
 
   private async requestJson(path: string): Promise<unknown> {
