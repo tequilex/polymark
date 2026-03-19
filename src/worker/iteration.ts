@@ -28,7 +28,11 @@ interface GammaLikeClient {
 }
 
 interface ClobLikeClient {
-  getTradesByMarket(marketId: string, limit?: number): Promise<unknown[]>;
+  getTradesByMarket(
+    marketId: string,
+    limit?: number,
+    offset?: number
+  ): Promise<unknown[]>;
 }
 
 interface LoggerLike {
@@ -46,6 +50,8 @@ export interface IterationContext {
   alertMinVolume: number;
   alertCooldownHours: number;
   requestConcurrency: number;
+  tradePageSize?: number;
+  maxTradePages?: number;
   logger?: LoggerLike;
 }
 
@@ -112,22 +118,57 @@ async function forEachWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+async function fetchTradesWithPagination(
+  client: ClobLikeClient,
+  marketId: string,
+  pageSize: number,
+  maxPages: number
+): Promise<unknown[]> {
+  const trades: unknown[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const pageTrades = await client.getTradesByMarket(marketId, pageSize, offset);
+    trades.push(...pageTrades);
+
+    if (pageTrades.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  return trades;
+}
+
 export async function runMonitorIteration(
   context: IterationContext
 ): Promise<IterationStats> {
-  const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
-  const currentHourStart = startOfUtcHour(nowSec);
-  const baselineFrom = currentHourStart - context.baselineDays * 24 * 3600;
-
-  const markets = await context.gammaClient.getTopActiveMarkets(
-    context.topMarketsLimit
-  );
-
   const stats: IterationStats = {
     marketsProcessed: 0,
     alertsCreated: 0,
     errorsCount: 0,
   };
+
+  const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
+  const currentHourStart = startOfUtcHour(nowSec);
+  const baselineFrom = currentHourStart - context.baselineDays * 24 * 3600;
+  const tradePageSize = context.tradePageSize ?? 500;
+  const maxTradePages = context.maxTradePages ?? 10;
+
+  let markets: MarketLike[] = [];
+  try {
+    markets = await context.gammaClient.getTopActiveMarkets(context.topMarketsLimit);
+  } catch (error) {
+    stats.errorsCount += 1;
+    context.logger?.warn?.(
+      {
+        err: error,
+      },
+      'iteration markets fetch failed'
+    );
+    return stats;
+  }
 
   await forEachWithConcurrency(
     markets,
@@ -136,7 +177,12 @@ export async function runMonitorIteration(
       stats.marketsProcessed += 1;
 
       try {
-        const trades = await context.clobClient.getTradesByMarket(market.id);
+        const trades = await fetchTradesWithPagination(
+          context.clobClient,
+          market.id,
+          tradePageSize,
+          maxTradePages
+        );
         const currentHourVolume = calculateCurrentHourVolume(trades, nowSec);
 
         upsertVolumeHistory(context.db, {

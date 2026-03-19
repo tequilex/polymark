@@ -24,10 +24,15 @@ export class ClobClient {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   }
 
-  async getTradesByMarket(marketId: string, limit = 500): Promise<ClobTrade[]> {
+  async getTradesByMarket(
+    marketId: string,
+    limit = 500,
+    offset = 0
+  ): Promise<ClobTrade[]> {
     const params = new URLSearchParams({
       market: marketId,
       limit: String(limit),
+      offset: String(offset),
     });
 
     const payload = await this.requestJson(`/trades?${params.toString()}`);

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { listAlerts } from '../../src/db/repositories/alertsRepo';
-import { upsertVolumeHistory } from '../../src/db/repositories/volumeHistoryRepo';
+import {
+  getVolumeHistory,
+  upsertVolumeHistory,
+} from '../../src/db/repositories/volumeHistoryRepo';
 import { runMigrations } from '../../src/db/migrate';
 import { runMonitorIteration } from '../../src/worker/iteration';
 import { createTestDb, listColumns, listIndexes, listTables } from '../helpers/testDb';
@@ -91,31 +94,78 @@ describe('monitor iteration', () => {
       ],
     };
 
-    const stats = await runMonitorIteration({
-      db,
-      gammaClient,
-      clobClient,
-      nowSec,
-      topMarketsLimit: 100,
-      baselineDays: 7,
-      alertMultiplier: 5,
-      alertMinVolume: 300,
-      alertCooldownHours: 6,
-      requestConcurrency: 4,
-    });
+    try {
+      const stats = await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+      });
 
-    const alerts = listAlerts(db, { limit: 10, offset: 0 });
+      const alerts = listAlerts(db, { limit: 10, offset: 0 });
+      const history = getVolumeHistory(
+        db,
+        'm-1',
+        currentHourStart,
+        currentHourStart
+      );
 
-    expect(stats.marketsProcessed).toBe(1);
-    expect(stats.alertsCreated).toBe(1);
-    expect(stats.errorsCount).toBe(0);
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]?.marketId).toBe('m-1');
-    expect(alerts[0]?.status).toBe('OPEN');
-    expect(alerts[0]?.baselineAvg).toBe(100);
-    expect(alerts[0]?.multiplier).toBeCloseTo(6.1);
-    expect(alerts[0]?.spikeAmount).toBeCloseTo(510);
+      expect(stats.marketsProcessed).toBe(1);
+      expect(stats.alertsCreated).toBe(1);
+      expect(stats.errorsCount).toBe(0);
+      expect(history).toHaveLength(1);
+      expect(history[0]?.timestamp).toBe(currentHourStart);
+      expect(history[0]?.hourlyVolume).toBe(610);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.marketId).toBe('m-1');
+      expect(alerts[0]?.status).toBe('OPEN');
+      expect(alerts[0]?.baselineAvg).toBe(100);
+      expect(alerts[0]?.multiplier).toBeCloseTo(6.1);
+      expect(alerts[0]?.spikeAmount).toBeCloseTo(510);
+    } finally {
+      db.close();
+    }
+  });
 
-    db.close();
+  it('returns iteration stats when gamma markets fetch fails', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => {
+        throw new Error('gamma unavailable');
+      },
+    };
+
+    const clobClient = {
+      getTradesByMarket: async () => [],
+    };
+
+    try {
+      const stats = await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec: 1_710_000_300,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+      });
+
+      expect(stats.marketsProcessed).toBe(0);
+      expect(stats.alertsCreated).toBe(0);
+      expect(stats.errorsCount).toBe(1);
+    } finally {
+      db.close();
+    }
   });
 });
