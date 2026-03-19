@@ -46,7 +46,6 @@ export function calculateCurrentHourVolume(
   nowSec: number
 ): number {
   const nowHourStart = startOfUtcHour(nowSec);
-  const nowHourEnd = nowHourStart + 3600;
 
   return trades
     .filter((trade): trade is TradeLike => typeof trade === 'object' && trade !== null)
@@ -56,7 +55,7 @@ export function calculateCurrentHourVolume(
         return sum;
       }
 
-      if (tsSec < nowHourStart || tsSec >= nowHourEnd) {
+      if (tsSec < nowHourStart || tsSec > nowSec) {
         return sum;
       }
 

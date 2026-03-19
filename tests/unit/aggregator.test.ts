@@ -34,6 +34,17 @@ describe('calculateCurrentHourVolume', () => {
     expect(calculateCurrentHourVolume(trades, now)).toBe(12);
   });
 
+  it('ignores trades that are later than now within the same hour', () => {
+    const now = 1_710_000_120;
+
+    const trades = [
+      { timestamp: 1_710_000_100, usdVolume: 20 },
+      { timestamp: 1_710_000_900, usdVolume: 300 },
+    ];
+
+    expect(calculateCurrentHourVolume(trades, now)).toBe(20);
+  });
+
   it('returns zero for malformed trades', () => {
     const now = 1_710_000_999;
 
