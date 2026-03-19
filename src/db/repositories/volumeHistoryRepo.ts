@@ -59,25 +59,17 @@ export function getVolumeHistory(
   fromTimestamp?: number,
   toTimestamp?: number
 ): Array<{ timestamp: number; hourlyVolume: number }> {
-  const hasRange =
-    typeof fromTimestamp === 'number' && typeof toTimestamp === 'number';
+  const clauses = ['market_id = ?'];
+  const params: Array<string | number> = [marketId];
 
-  if (hasRange) {
-    return db
-      .prepare(
-        `
-          SELECT timestamp, hourly_volume AS hourlyVolume
-          FROM volume_history
-          WHERE market_id = ?
-            AND timestamp >= ?
-            AND timestamp <= ?
-          ORDER BY timestamp ASC
-        `
-      )
-      .all(marketId, fromTimestamp, toTimestamp) as Array<{
-      timestamp: number;
-      hourlyVolume: number;
-    }>;
+  if (typeof fromTimestamp === 'number') {
+    clauses.push('timestamp >= ?');
+    params.push(fromTimestamp);
+  }
+
+  if (typeof toTimestamp === 'number') {
+    clauses.push('timestamp <= ?');
+    params.push(toTimestamp);
   }
 
   return db
@@ -85,9 +77,9 @@ export function getVolumeHistory(
       `
         SELECT timestamp, hourly_volume AS hourlyVolume
         FROM volume_history
-        WHERE market_id = ?
+        WHERE ${clauses.join(' AND ')}
         ORDER BY timestamp ASC
       `
     )
-    .all(marketId) as Array<{ timestamp: number; hourlyVolume: number }>;
+    .all(...params) as Array<{ timestamp: number; hourlyVolume: number }>;
 }

@@ -52,6 +52,27 @@ function mapAlertRow(row: Record<string, unknown>): AlertRow {
   };
 }
 
+function clampLimit(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 50;
+  }
+
+  const normalized = Math.floor(value);
+  if (normalized <= 0) {
+    return 1;
+  }
+
+  return Math.min(normalized, 200);
+}
+
+function clampOffset(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(value));
+}
+
 export function createAlert(db: SQLiteDatabase, input: CreateAlertInput): number {
   const result = db
     .prepare(
@@ -139,8 +160,8 @@ export function listAlerts(
   }
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  const limit = filters.limit ?? 50;
-  const offset = filters.offset ?? 0;
+  const limit = clampLimit(filters.limit);
+  const offset = clampOffset(filters.offset);
 
   const rows = db
     .prepare(
@@ -148,7 +169,7 @@ export function listAlerts(
         SELECT *
         FROM alerts
         ${where}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ?
         OFFSET ?
       `
