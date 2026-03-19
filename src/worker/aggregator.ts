@@ -55,7 +55,7 @@ export function calculateCurrentHourVolume(
         return sum;
       }
 
-      if (tsSec < nowHourStart || tsSec > nowSec) {
+      if (tsSec < nowHourStart || tsSec >= nowSec) {
         return sum;
       }
 

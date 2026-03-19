@@ -39,6 +39,7 @@ describe('calculateCurrentHourVolume', () => {
 
     const trades = [
       { timestamp: 1_710_000_100, usdVolume: 20 },
+      { timestamp: 1_710_000_120, usdVolume: 5 },
       { timestamp: 1_710_000_900, usdVolume: 300 },
     ];
 
