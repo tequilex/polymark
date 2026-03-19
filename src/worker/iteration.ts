@@ -123,13 +123,18 @@ async function fetchTradesWithPagination(
   marketId: string,
   pageSize: number,
   maxPages: number
-): Promise<unknown[]> {
+): Promise<{ trades: unknown[]; truncated: boolean }> {
   const trades: unknown[] = [];
   let offset = 0;
+  let truncated = false;
 
   for (let page = 0; page < maxPages; page += 1) {
     const pageTrades = await client.getTradesByMarket(marketId, pageSize, offset);
     trades.push(...pageTrades);
+
+    if (page === maxPages - 1 && pageTrades.length === pageSize) {
+      truncated = true;
+    }
 
     if (pageTrades.length < pageSize) {
       break;
@@ -138,7 +143,7 @@ async function fetchTradesWithPagination(
     offset += pageSize;
   }
 
-  return trades;
+  return { trades, truncated };
 }
 
 export async function runMonitorIteration(
@@ -177,13 +182,27 @@ export async function runMonitorIteration(
       stats.marketsProcessed += 1;
 
       try {
-        const trades = await fetchTradesWithPagination(
+        const paginated = await fetchTradesWithPagination(
           context.clobClient,
           market.id,
           tradePageSize,
           maxTradePages
         );
-        const currentHourVolume = calculateCurrentHourVolume(trades, nowSec);
+        if (paginated.truncated) {
+          context.logger?.warn?.(
+            {
+              marketId: market.id,
+              tradePageSize,
+              maxTradePages,
+            },
+            'iteration trades truncated by pagination cap'
+          );
+        }
+
+        const currentHourVolume = calculateCurrentHourVolume(
+          paginated.trades,
+          nowSec
+        );
 
         upsertVolumeHistory(context.db, {
           marketId: market.id,

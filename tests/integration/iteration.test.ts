@@ -168,4 +168,62 @@ describe('monitor iteration', () => {
       db.close();
     }
   });
+
+  it('warns when trades pagination reaches cap and may truncate data', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    const nowSec = 1_710_000_300;
+    const currentHourStart = nowSec - (nowSec % 3600);
+
+    for (let i = 1; i <= 24; i += 1) {
+      upsertVolumeHistory(db, {
+        marketId: 'm-1',
+        timestamp: currentHourStart - i * 3600,
+        hourlyVolume: 100,
+      });
+    }
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => [{ id: 'm-1', question: 'Q1' }],
+    };
+
+    const clobClient = {
+      getTradesByMarket: async () => [
+        { timestamp: currentHourStart + 10, usdVolume: 100 },
+        { timestamp: currentHourStart + 20, usdVolume: 100 },
+      ],
+    };
+
+    const warnings: string[] = [];
+    const logger = {
+      warn: (_meta: Record<string, unknown>, message?: string) => {
+        warnings.push(message ?? '');
+      },
+    };
+
+    try {
+      await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+        tradePageSize: 2,
+        maxTradePages: 2,
+        logger,
+      });
+
+      expect(warnings).toContain(
+        'iteration trades truncated by pagination cap'
+      );
+    } finally {
+      db.close();
+    }
+  });
 });
