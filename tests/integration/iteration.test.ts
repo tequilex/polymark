@@ -7,6 +7,7 @@ import {
 } from '../../src/db/repositories/volumeHistoryRepo';
 import { runMigrations } from '../../src/db/migrate';
 import { runMonitorIteration } from '../../src/worker/iteration';
+import { runLoopTicks, startMonitorLoop } from '../../src/worker/loop';
 import { createTestDb, listColumns, listIndexes, listTables } from '../helpers/testDb';
 
 describe('database initialization', () => {
@@ -225,5 +226,122 @@ describe('monitor iteration', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('monitor loop', () => {
+  it('runs resolver every 10 iterations', async () => {
+    let iterationCalls = 0;
+    let resolveCalls = 0;
+
+    await runLoopTicks(
+      {
+        resolveEveryNIterations: 10,
+        runIteration: async () => {
+          iterationCalls += 1;
+          return {
+            marketsProcessed: 0,
+            alertsCreated: 0,
+            errorsCount: 0,
+          };
+        },
+        resolveAlerts: async () => {
+          resolveCalls += 1;
+          return 0;
+        },
+      },
+      10
+    );
+
+    expect(iterationCalls).toBe(10);
+    expect(resolveCalls).toBe(1);
+  });
+});
+
+describe('monitor loop shutdown', () => {
+  it('stops loop immediately without waiting full poll interval', async () => {
+    let firstTickDone = false;
+
+    const loop = startMonitorLoop({
+      pollIntervalSec: 5,
+      resolveEveryNIterations: 10,
+      runIteration: async () => {
+        firstTickDone = true;
+        return {
+          marketsProcessed: 0,
+          alertsCreated: 0,
+          errorsCount: 0,
+        };
+      },
+      resolveAlerts: async () => 0,
+    });
+
+    while (!firstTickDone) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    loop.stop();
+
+    const stoppedQuickly = await Promise.race([
+      loop.done.then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 150);
+      }),
+    ]);
+
+    expect(stoppedQuickly).toBe(true);
+  });
+});
+
+describe('monitor loop shutdown with custom sleep', () => {
+  it('stops loop even when custom sleep is pending', async () => {
+    let firstTickDone = false;
+    const releaseSleepRef: { current: (() => void) | null } = { current: null };
+
+    let resolveSleepStarted: (() => void) | null = null;
+    const sleepStarted = new Promise<void>((resolve) => {
+      resolveSleepStarted = resolve;
+    });
+
+    const loop = startMonitorLoop({
+      pollIntervalSec: 5,
+      resolveEveryNIterations: 10,
+      runIteration: async () => {
+        firstTickDone = true;
+        return {
+          marketsProcessed: 0,
+          alertsCreated: 0,
+          errorsCount: 0,
+        };
+      },
+      resolveAlerts: async () => 0,
+      sleepFn: async () => {
+        await new Promise<void>((resolve) => {
+          releaseSleepRef.current = () => {
+            resolve();
+          };
+          resolveSleepStarted?.();
+        });
+      },
+    });
+
+    while (!firstTickDone) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    await sleepStarted;
+
+    loop.stop();
+
+    const stoppedQuickly = await Promise.race([
+      loop.done.then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 150);
+      }),
+    ]);
+
+    releaseSleepRef.current?.();
+
+    expect(stoppedQuickly).toBe(true);
   });
 });

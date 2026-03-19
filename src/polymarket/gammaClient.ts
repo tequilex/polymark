@@ -31,6 +31,17 @@ function getVolumeScore(item: Record<string, unknown>): number {
   );
 }
 
+function mapMarket(item: Record<string, unknown>): GammaMarket {
+  const id = String(item.id ?? item.marketId ?? item.conditionId ?? '');
+  const question = String(item.question ?? item.title ?? '');
+
+  return {
+    ...item,
+    id,
+    question,
+  };
+}
+
 export class GammaClient {
   private readonly fetchFn: typeof fetch;
   private readonly baseUrl: string;
@@ -53,20 +64,43 @@ export class GammaClient {
     }
 
     return payload
-      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-      .map((item) => {
-        const id = String(item.id ?? item.marketId ?? item.conditionId ?? '');
-        const question = String(item.question ?? item.title ?? '');
-
-        return {
-          ...item,
-          id,
-          question,
-        };
-      })
+      .filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === 'object' && item !== null
+      )
+      .map(mapMarket)
       .filter((item) => item.id.length > 0)
       .sort((left, right) => getVolumeScore(right) - getVolumeScore(left))
       .slice(0, limit);
+  }
+
+  async getMarketById(marketId: string): Promise<GammaMarket | null> {
+    try {
+      const payload = await this.requestJson(
+        `/markets/${encodeURIComponent(marketId)}`
+      );
+
+      if (Array.isArray(payload)) {
+        const first = payload.find(
+          (item): item is Record<string, unknown> =>
+            typeof item === 'object' && item !== null
+        );
+
+        return first ? mapMarket(first) : null;
+      }
+
+      if (!payload || typeof payload !== 'object') {
+        return null;
+      }
+
+      return mapMarket(payload as Record<string, unknown>);
+    } catch (error) {
+      if (error instanceof HttpStatusError && error.status === 404) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   private async requestJson(path: string): Promise<unknown> {

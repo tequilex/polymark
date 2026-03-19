@@ -85,3 +85,38 @@ describe('ClobClient', () => {
     expect(trades).toEqual([]);
   });
 });
+
+describe('GammaClient market details', () => {
+  it('fetches a market by id', async () => {
+    const calls: string[] = [];
+
+    const fetchFn: typeof fetch = async (input) => {
+      calls.push(String(input));
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'm-10',
+          question: 'Will it happen?',
+          closed: true,
+        }),
+      } as Response;
+    };
+
+    const client = new GammaClient({
+      fetchFn,
+      retries: 0,
+      jitter: false,
+      baseDelayMs: 0,
+      timeoutMs: 1000,
+    });
+
+    const market = await client.getMarketById('m-10');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('/markets/m-10');
+    expect(market?.id).toBe('m-10');
+    expect(market?.question).toBe('Will it happen?');
+  });
+});
