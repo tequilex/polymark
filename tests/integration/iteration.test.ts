@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { listAlerts } from '../../src/db/repositories/alertsRepo';
+import { upsertVolumeHistory } from '../../src/db/repositories/volumeHistoryRepo';
 import { runMigrations } from '../../src/db/migrate';
-import {
-  createTestDb,
-  listColumns,
-  listIndexes,
-  listTables,
-} from '../helpers/testDb';
+import { runMonitorIteration } from '../../src/worker/iteration';
+import { createTestDb, listColumns, listIndexes, listTables } from '../helpers/testDb';
 
 describe('database initialization', () => {
   it('creates required tables, columns and indexes idempotently', () => {
@@ -55,5 +53,69 @@ describe('database initialization', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('monitor iteration', () => {
+  it('stores current hour volume and creates alert when thresholds are met', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    const nowSec = 1_710_000_300;
+    const currentHourStart = nowSec - (nowSec % 3600);
+
+    // База: 24 завершенных часа по 100 USD.
+    for (let i = 1; i <= 24; i += 1) {
+      upsertVolumeHistory(db, {
+        marketId: 'm-1',
+        timestamp: currentHourStart - i * 3600,
+        hourlyVolume: 100,
+      });
+    }
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => [
+        {
+          id: 'm-1',
+          question: 'Will X happen?',
+          yesPrice: 0.61,
+          noPrice: 0.39,
+        },
+      ],
+    };
+
+    const clobClient = {
+      getTradesByMarket: async () => [
+        { timestamp: currentHourStart + 10, usdVolume: 350 },
+        { timestamp: currentHourStart + 20, usdVolume: 260 },
+      ],
+    };
+
+    const stats = await runMonitorIteration({
+      db,
+      gammaClient,
+      clobClient,
+      nowSec,
+      topMarketsLimit: 100,
+      baselineDays: 7,
+      alertMultiplier: 5,
+      alertMinVolume: 300,
+      alertCooldownHours: 6,
+      requestConcurrency: 4,
+    });
+
+    const alerts = listAlerts(db, { limit: 10, offset: 0 });
+
+    expect(stats.marketsProcessed).toBe(1);
+    expect(stats.alertsCreated).toBe(1);
+    expect(stats.errorsCount).toBe(0);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.marketId).toBe('m-1');
+    expect(alerts[0]?.status).toBe('OPEN');
+    expect(alerts[0]?.baselineAvg).toBe(100);
+    expect(alerts[0]?.multiplier).toBeCloseTo(6.1);
+    expect(alerts[0]?.spikeAmount).toBeCloseTo(510);
+
+    db.close();
   });
 });
