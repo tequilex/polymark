@@ -84,41 +84,35 @@ export async function resolveOpenAlerts(
   let resolvedCount = 0;
 
   for (const alert of openAlerts) {
-    const market = await context.gammaClient.getMarketById(alert.marketId);
-    if (!market || !isClosedMarket(market)) {
-      continue;
+    try {
+      const market = await context.gammaClient.getMarketById(alert.marketId);
+      if (!market || !isClosedMarket(market)) {
+        continue;
+      }
+
+      const outcome = extractOutcome(market);
+      if (outcome === 'YES' || outcome === 'NO') {
+        const pnl = calculatePnl(
+          outcome,
+          alert.priceYesAtAlert,
+          alert.priceNoAtAlert
+        );
+
+        resolveAlert(context.db, {
+          id: alert.id,
+          resolvedAt: nowSec,
+          finalOutcome: outcome,
+          pnlIfYes: pnl.pnlIfYes,
+          pnlIfNo: pnl.pnlIfNo,
+          status: 'RESOLVED',
+        });
+
+        resolvedCount += 1;
+      }
+      // Outcome невалиден/неизвестен: оставляем OPEN и пробуем снова позже.
+    } catch (_error) {
+      // Ошибка по одному рынку не должна останавливать резолв остальных.
     }
-
-    const outcome = extractOutcome(market);
-    if (outcome === 'YES' || outcome === 'NO') {
-      const pnl = calculatePnl(
-        outcome,
-        alert.priceYesAtAlert,
-        alert.priceNoAtAlert
-      );
-
-      resolveAlert(context.db, {
-        id: alert.id,
-        resolvedAt: nowSec,
-        finalOutcome: outcome,
-        pnlIfYes: pnl.pnlIfYes,
-        pnlIfNo: pnl.pnlIfNo,
-        status: 'RESOLVED',
-      });
-
-      resolvedCount += 1;
-      continue;
-    }
-
-    resolveAlert(context.db, {
-      id: alert.id,
-      resolvedAt: nowSec,
-      finalOutcome: 'UNRESOLVED',
-      pnlIfYes: null,
-      pnlIfNo: null,
-      status: 'ERROR',
-    });
-    resolvedCount += 1;
   }
 
   return resolvedCount;

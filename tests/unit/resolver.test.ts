@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   createAlert,
   getAlertById,
-  listOpenAlerts,
 } from '../../src/db/repositories/alertsRepo';
 import { runMigrations } from '../../src/db/migrate';
 import { resolveOpenAlerts } from '../../src/worker/resolver';
@@ -92,11 +91,11 @@ describe('resolveOpenAlerts', () => {
     db.close();
   });
 
-  it('marks alert as ERROR when market closes with unknown outcome', async () => {
+  it('keeps alert OPEN when market closes with unknown outcome', async () => {
     const db = createTestDb();
     runMigrations(db);
 
-    createAlert(db, {
+    const alertId = createAlert(db, {
       marketId: 'm-3',
       question: 'Will Z happen?',
       spikeAmount: 300,
@@ -121,8 +120,64 @@ describe('resolveOpenAlerts', () => {
       nowSec: 1_710_000_900,
     });
 
-    const openAlerts = listOpenAlerts(db);
-    expect(openAlerts).toHaveLength(0);
+    const updated = getAlertById(db, alertId);
+    expect(updated?.status).toBe('OPEN');
+    expect(updated?.finalOutcome).toBe(null);
+
+    db.close();
+  });
+
+  it('continues resolving remaining alerts when one market fetch fails', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    createAlert(db, {
+      marketId: 'm-fail',
+      question: 'Will fail?',
+      spikeAmount: 100,
+      baselineAvg: 10,
+      multiplier: 10,
+      priceYesAtAlert: 0.2,
+      priceNoAtAlert: 0.8,
+      createdAt: 1_710_000_000,
+    });
+
+    const successAlertId = createAlert(db, {
+      marketId: 'm-ok',
+      question: 'Will pass?',
+      spikeAmount: 100,
+      baselineAvg: 10,
+      multiplier: 10,
+      priceYesAtAlert: 0.2,
+      priceNoAtAlert: 0.8,
+      createdAt: 1_710_000_000,
+    });
+
+    const gammaClient = {
+      getMarketById: async (marketId: string) => {
+        if (marketId === 'm-fail') {
+          throw new Error('temporary gamma error');
+        }
+
+        return {
+          id: marketId,
+          closed: true,
+          outcome: 'NO',
+        };
+      },
+    };
+
+    const resolved = await resolveOpenAlerts({
+      db,
+      gammaClient,
+      nowSec: 1_710_000_900,
+    });
+
+    const updated = getAlertById(db, successAlertId);
+
+    expect(resolved).toBe(1);
+    expect(updated?.status).toBe('RESOLVED');
+    expect(updated?.finalOutcome).toBe('NO');
 
     db.close();
   });
