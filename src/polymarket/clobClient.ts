@@ -13,7 +13,7 @@ export interface ClobClientOptions {
   fetchFn?: typeof fetch;
 }
 
-const DEFAULT_BASE_URL = 'https://clob.polymarket.com';
+const DEFAULT_BASE_URL = 'https://data-api.polymarket.com';
 
 export class ClobClient {
   private readonly fetchFn: typeof fetch;
@@ -75,7 +75,7 @@ export class ClobClient {
             const body = await response.text();
             throw new HttpStatusError(
               response.status,
-              `CLOB API request failed with status ${response.status}`,
+              `Trades API request failed with status ${response.status}`,
               body
             );
           }

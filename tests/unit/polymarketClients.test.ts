@@ -41,6 +41,34 @@ describe('GammaClient', () => {
 });
 
 describe('ClobClient', () => {
+  it('uses public data-api base url by default', async () => {
+    const calls: string[] = [];
+    const fetchFn: typeof fetch = async (input) => {
+      calls.push(String(input));
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as Response;
+    };
+
+    const client = new ClobClient({
+      fetchFn,
+      retries: 0,
+      jitter: false,
+      baseDelayMs: 0,
+      timeoutMs: 1000,
+    });
+
+    await client.getTradesByMarket(
+      '0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b'
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('https://data-api.polymarket.com/trades?');
+  });
+
   it('extracts trades from data envelope', async () => {
     const fetchFn: typeof fetch = async () => {
       return {

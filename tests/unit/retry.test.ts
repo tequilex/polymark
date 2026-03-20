@@ -163,4 +163,41 @@ describe('withRetry', () => {
     expect(attempts).toBe(3);
     expect(delays).toEqual([10, 20]);
   });
+
+  it('uses retry_after from 429 body as retry delay floor', async () => {
+    const delays: number[] = [];
+    const sleptMs: number[] = [];
+    let attempts = 0;
+
+    const result = await withRetry(
+      async () => {
+        attempts += 1;
+        if (attempts < 2) {
+          throw new HttpStatusError(
+            429,
+            'rate limited',
+            JSON.stringify({ retry_after: 30 })
+          );
+        }
+
+        return 'ok';
+      },
+      {
+        retries: 1,
+        baseDelayMs: 10,
+        jitter: false,
+        onRetry: (_attempt, _error, delayMs) => {
+          delays.push(delayMs);
+        },
+        sleepFn: async (ms) => {
+          sleptMs.push(ms);
+        },
+      }
+    );
+
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
+    expect(delays).toEqual([30_000]);
+    expect(sleptMs).toEqual([30_000]);
+  });
 });

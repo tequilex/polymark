@@ -345,3 +345,198 @@ describe('monitor loop shutdown with custom sleep', () => {
     expect(stoppedQuickly).toBe(true);
   });
 });
+
+describe('monitor iteration market id mapping', () => {
+  it('uses gamma conditionId for trades requests when available', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    let requestedMarketId = '';
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => [
+        {
+          id: 'm-raw-id',
+          conditionId:
+            '0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b',
+          question: 'Q',
+        },
+      ],
+    };
+
+    const clobClient = {
+      getTradesByMarket: async (marketId: string) => {
+        requestedMarketId = marketId;
+        return [];
+      },
+    };
+
+    try {
+      await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec: 1_710_000_300,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+      });
+
+      expect(requestedMarketId).toBe(
+        '0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b'
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('monitor iteration data-api pagination guard', () => {
+  it('does not request trades with offset greater than 3000', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    const nowSec = 1_710_000_300;
+    const currentHourStart = nowSec - (nowSec % 3600);
+
+    for (let i = 1; i <= 24; i += 1) {
+      upsertVolumeHistory(db, {
+        marketId: 'm-1',
+        timestamp: currentHourStart - i * 3600,
+        hourlyVolume: 100,
+      });
+    }
+
+    const offsets: number[] = [];
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => [
+        {
+          id: 'm-1',
+          conditionId:
+            '0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b',
+          question: 'Q',
+        },
+      ],
+    };
+
+    const clobClient = {
+      getTradesByMarket: async (
+        _marketId: string,
+        _limit = 500,
+        offset = 0
+      ) => {
+        offsets.push(offset);
+        return Array.from({ length: _limit }, () => ({
+          timestamp: currentHourStart + 10,
+          usdVolume: 10,
+        }));
+      },
+    };
+
+    try {
+      await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+        tradePageSize: 500,
+        maxTradePages: 10,
+      });
+
+      expect(Math.max(...offsets)).toBeLessThanOrEqual(3000);
+      expect(offsets).not.toContain(3500);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('stops pagination when page already contains trades older than current hour', async () => {
+    const db = createTestDb();
+    runMigrations(db);
+
+    const nowSec = 1_710_000_300;
+    const currentHourStart = nowSec - (nowSec % 3600);
+
+    for (let i = 1; i <= 24; i += 1) {
+      upsertVolumeHistory(db, {
+        marketId: 'm-2',
+        timestamp: currentHourStart - i * 3600,
+        hourlyVolume: 100,
+      });
+    }
+
+    const offsets: number[] = [];
+
+    const gammaClient = {
+      getTopActiveMarkets: async () => [
+        {
+          id: 'm-2',
+          conditionId:
+            '0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b',
+          question: 'Q',
+        },
+      ],
+    };
+
+    const clobClient = {
+      getTradesByMarket: async (
+        _marketId: string,
+        _limit = 2,
+        offset = 0
+      ) => {
+        offsets.push(offset);
+
+        if (offset === 0) {
+          return [
+            { timestamp: currentHourStart + 120, usdVolume: 10 },
+            { timestamp: currentHourStart + 60, usdVolume: 10 },
+          ];
+        }
+
+        if (offset === 2) {
+          return [
+            { timestamp: currentHourStart + 1, usdVolume: 10 },
+            { timestamp: currentHourStart - 1, usdVolume: 10 },
+          ];
+        }
+
+        return [
+          { timestamp: currentHourStart - 10, usdVolume: 10 },
+          { timestamp: currentHourStart - 20, usdVolume: 10 },
+        ];
+      },
+    };
+
+    try {
+      await runMonitorIteration({
+        db,
+        gammaClient,
+        clobClient,
+        nowSec,
+        topMarketsLimit: 100,
+        baselineDays: 7,
+        alertMultiplier: 5,
+        alertMinVolume: 300,
+        alertCooldownHours: 6,
+        requestConcurrency: 4,
+        tradePageSize: 2,
+        maxTradePages: 10,
+      });
+
+      expect(offsets).toEqual([0, 2]);
+      expect(offsets).not.toContain(4);
+    } finally {
+      db.close();
+    }
+  });
+});

@@ -4,6 +4,7 @@ export interface RetryConfig {
   jitter: boolean;
   shouldRetry?: (error: unknown) => boolean;
   onRetry?: (attempt: number, error: unknown, delayMs: number) => void;
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 export class HttpStatusError extends Error {
@@ -68,11 +69,42 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function getRetryAfterMs(error: unknown): number | null {
+  if (!(error instanceof HttpStatusError) || error.status !== 429) {
+    return null;
+  }
+
+  if (typeof error.body !== 'string' || error.body.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(error.body) as { retry_after?: unknown };
+    const retryAfter =
+      typeof parsed.retry_after === 'string'
+        ? Number(parsed.retry_after)
+        : parsed.retry_after;
+
+    if (typeof retryAfter !== 'number' || !Number.isFinite(retryAfter)) {
+      return null;
+    }
+
+    if (retryAfter <= 0) {
+      return null;
+    }
+
+    return Math.ceil(retryAfter * 1000);
+  } catch {
+    return null;
+  }
+}
+
 export async function withRetry<T>(
   fn: () => Promise<T>,
   config: RetryConfig
 ): Promise<T> {
   const shouldRetry = config.shouldRetry ?? isRetryableError;
+  const sleepFn = config.sleepFn ?? sleep;
 
   let attempt = 0;
   while (true) {
@@ -83,9 +115,16 @@ export async function withRetry<T>(
         throw error;
       }
 
-      const delayMs = getDelayMs(attempt, config.baseDelayMs, config.jitter);
+      const defaultDelayMs = getDelayMs(
+        attempt,
+        config.baseDelayMs,
+        config.jitter
+      );
+      const retryAfterMs = getRetryAfterMs(error);
+      const delayMs =
+        retryAfterMs === null ? defaultDelayMs : Math.max(defaultDelayMs, retryAfterMs);
       config.onRetry?.(attempt + 1, error, delayMs);
-      await sleep(delayMs);
+      await sleepFn(delayMs);
       attempt += 1;
     }
   }

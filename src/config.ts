@@ -13,7 +13,7 @@ const envSchema = z.object({
   RESOLVE_EVERY_N_ITERATIONS: z.coerce.number().int().positive().default(10),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   REQUEST_RETRIES: z.coerce.number().int().nonnegative().default(3),
-  REQUEST_CONCURRENCY: z.coerce.number().int().positive().default(8),
+  REQUEST_CONCURRENCY: z.coerce.number().int().positive().default(2),
   DB_PATH: z.string().default('./polymarket.db'),
   CORS_ORIGIN: z.string().default('http://localhost:5173')
 });

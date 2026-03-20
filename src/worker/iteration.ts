@@ -15,7 +15,7 @@ import {
   shouldAlert,
 } from './analyzer';
 import { canCreateAlert } from './alerter';
-import { startOfUtcHour } from '../utils/time';
+import { startOfUtcHour, toUnixSeconds } from '../utils/time';
 
 interface MarketLike {
   id: string;
@@ -61,9 +61,57 @@ export interface IterationStats {
   errorsCount: number;
 }
 
+const DATA_API_MAX_OFFSET = 3000;
+
 function toFiniteNumber(value: unknown): number {
   const parsed = typeof value === 'string' ? Number(value) : value;
   return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getTradeTimestampSec(trade: unknown): number | null {
+  if (typeof trade !== 'object' || trade === null) {
+    return null;
+  }
+
+  const typedTrade = trade as Record<string, unknown>;
+  const raw =
+    toFiniteNumber(typedTrade.timestamp) ||
+    toFiniteNumber(typedTrade.time) ||
+    toFiniteNumber(typedTrade.createdAt) ||
+    toFiniteNumber(typedTrade.created_at);
+
+  if (raw <= 0) {
+    return null;
+  }
+
+  const tsSec = toUnixSeconds(raw);
+  if (!Number.isFinite(tsSec) || tsSec <= 0) {
+    return null;
+  }
+
+  return tsSec;
+}
+
+function pageHasTradesOlderThan(
+  trades: unknown[],
+  thresholdSec: number
+): boolean {
+  let hasTimestamp = false;
+  let oldestTimestamp = Number.POSITIVE_INFINITY;
+
+  for (const trade of trades) {
+    const tsSec = getTradeTimestampSec(trade);
+    if (tsSec === null) {
+      continue;
+    }
+
+    hasTimestamp = true;
+    if (tsSec < oldestTimestamp) {
+      oldestTimestamp = tsSec;
+    }
+  }
+
+  return hasTimestamp && oldestTimestamp < thresholdSec;
 }
 
 function extractPriceYes(market: MarketLike): number | null {
@@ -88,6 +136,23 @@ function extractPriceNo(market: MarketLike): number | null {
 
 function getQuestion(market: MarketLike): string {
   return String(market.question ?? market.title ?? market.id);
+}
+
+function isConditionId(value: string): boolean {
+  return /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function getTradesMarketId(market: MarketLike): string {
+  const conditionId = String(
+    market.conditionId ?? market.condition_id ?? market.marketConditionId ?? ''
+  );
+
+  // Для data-api нужен conditionId рынка, а не числовой market id из gamma.
+  if (isConditionId(conditionId)) {
+    return conditionId;
+  }
+
+  return String(market.id);
 }
 
 async function forEachWithConcurrency<T>(
@@ -122,13 +187,19 @@ async function fetchTradesWithPagination(
   client: ClobLikeClient,
   marketId: string,
   pageSize: number,
-  maxPages: number
+  maxPages: number,
+  stopOlderThanSec?: number
 ): Promise<{ trades: unknown[]; truncated: boolean }> {
   const trades: unknown[] = [];
   let offset = 0;
   let truncated = false;
 
   for (let page = 0; page < maxPages; page += 1) {
+    if (offset > DATA_API_MAX_OFFSET) {
+      truncated = true;
+      break;
+    }
+
     const pageTrades = await client.getTradesByMarket(marketId, pageSize, offset);
     trades.push(...pageTrades);
 
@@ -140,7 +211,21 @@ async function fetchTradesWithPagination(
       break;
     }
 
-    offset += pageSize;
+    if (
+      typeof stopOlderThanSec === 'number' &&
+      pageHasTradesOlderThan(pageTrades, stopOlderThanSec)
+    ) {
+      break;
+    }
+
+    const nextOffset = offset + pageSize;
+    // Data API возвращает 400 при offset > 3000, поэтому не запрашиваем такие страницы.
+    if (nextOffset > DATA_API_MAX_OFFSET) {
+      truncated = true;
+      break;
+    }
+
+    offset = nextOffset;
   }
 
   return { trades, truncated };
@@ -182,16 +267,20 @@ export async function runMonitorIteration(
       stats.marketsProcessed += 1;
 
       try {
+        const tradesMarketId = getTradesMarketId(market);
+
         const paginated = await fetchTradesWithPagination(
           context.clobClient,
-          market.id,
+          tradesMarketId,
           tradePageSize,
-          maxTradePages
+          maxTradePages,
+          currentHourStart
         );
         if (paginated.truncated) {
           context.logger?.warn?.(
             {
               marketId: market.id,
+              tradesMarketId,
               tradePageSize,
               maxTradePages,
             },
