@@ -64,6 +64,33 @@ npm run dev
 - `GET /api/markets/:id/volume?from=&to=`
 - `GET /api/stats/summary`
 
+## Минимальный React фронт
+
+В репозитории есть отдельный фронт-пакет в `web/` с sidebar-навигацией:
+
+- `Dashboard` — health + summary + последние алерты
+- `Alerts` — таблица алертов с фильтрами
+- `Market` — почасовой volume по выбранному market id
+- Переключатель темы `Dark/Light` (по умолчанию `Dark`, выбор сохраняется в браузере)
+
+### Запуск фронта локально
+
+```bash
+cd web
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Или из корня проекта:
+
+```bash
+npm run web:dev
+```
+
+По умолчанию фронт ходит в backend `http://localhost:8080` (переменная `VITE_API_BASE_URL`).
+Автообновление данных на фронте — каждые 60 секунд.
+
 ## Запуск на VPS
 
 ### Вариант 1: systemd (рекомендуется)
