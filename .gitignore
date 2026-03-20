@@ -4,3 +4,6 @@ polymarket.db
 .env
 .DS_Store
 coverage/
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
