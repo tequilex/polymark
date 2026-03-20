@@ -91,6 +91,82 @@ npm run web:dev
 По умолчанию фронт ходит в backend `http://localhost:8080` (переменная `VITE_API_BASE_URL`).
 Автообновление данных на фронте — каждые 60 секунд.
 
+## Docker на Raspberry Pi 3B+
+
+Для `Pi 3B+` лучше запускать 2 контейнера:
+
+- `polymarket-api` (backend)
+- `polymarket-web` (React static через nginx)
+
+В `docker-compose.yml` уже стоят облегчённые настройки под слабый CPU:
+
+- `TOP_MARKETS_LIMIT=40`
+- `REQUEST_CONCURRENCY=1`
+- лимиты CPU/RAM на контейнеры
+
+### Шаги деплоя
+
+1. Скопировать репозиторий на Raspberry:
+
+```bash
+git clone <your_repo_url> poly_codex
+cd poly_codex
+```
+
+2. Подготовить переменные:
+
+```bash
+cp .env.deploy.example .env.deploy
+```
+
+В `.env.deploy` указать IP Raspberry:
+
+```env
+PI_HOST=192.168.1.100
+```
+
+3. Создать папку под SQLite:
+
+```bash
+mkdir -p data
+```
+
+4. Собрать и запустить:
+
+```bash
+docker compose --env-file .env.deploy build
+docker compose --env-file .env.deploy up -d
+```
+
+5. Проверить:
+
+```bash
+docker compose --env-file .env.deploy ps
+docker compose --env-file .env.deploy logs -f api
+```
+
+### Адреса
+
+- Frontend: `http://<PI_HOST>`
+- Backend health: `http://<PI_HOST>:8080/api/health`
+
+### Обновление после изменений
+
+```bash
+git pull
+docker compose --env-file .env.deploy build
+docker compose --env-file .env.deploy up -d
+```
+
+### Если Raspberry не тянет
+
+Уменьшить нагрузку в `docker-compose.yml` у сервиса `api`:
+
+- `TOP_MARKETS_LIMIT: 30`
+- `POLL_INTERVAL_SEC: 90`
+- `REQUEST_CONCURRENCY: 1` (оставить)
+- `RESOLVE_EVERY_N_ITERATIONS: 30`
+
 ## Запуск на VPS
 
 ### Вариант 1: systemd (рекомендуется)

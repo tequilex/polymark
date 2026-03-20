@@ -1,0 +1,45 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: polymarket-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DB_PATH: /app/data/polymarket.db
+      CORS_ORIGIN: http://${PI_HOST}
+
+      POLL_INTERVAL_SEC: 60
+      TOP_MARKETS_LIMIT: 40
+      REQUEST_CONCURRENCY: 1
+      REQUEST_RETRIES: 2
+      REQUEST_TIMEOUT_MS: 8000
+      RESOLVE_EVERY_N_ITERATIONS: 20
+
+      ALERT_MULTIPLIER: 5
+      ALERT_MIN_VOLUME: 300
+      ALERT_COOLDOWN_HOURS: 6
+      BASELINE_DAYS: 7
+    volumes:
+      - ./data:/app/data
+    mem_limit: 700m
+    cpus: 1.50
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE_URL: http://${PI_HOST}:8080
+    container_name: polymarket-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    mem_limit: 128m
+    cpus: 0.25
